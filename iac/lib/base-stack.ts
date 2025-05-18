@@ -1,14 +1,24 @@
 import { CfnOutput, Stack, StackProps, Tags } from "aws-cdk-lib";
+import { IVpc, Vpc } from "aws-cdk-lib/aws-ec2";
+import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
+
+export type BaseStackProps = StackProps & {
+  tags?: { [key: string]: string };
+  vpcIdParamName?: string;
+};
 
 export class BaseStack extends Stack {
   private _org: string;
   private _env: string;
   private _environments: string[] = ["dev", "qa", "sat", "uat", "prod"];
-  constructor(scope: Construct, id: string, props?: StackProps) {
+  protected vpc?: IVpc;
+  private vpcIdParamName?: string;
+  constructor(scope: Construct, id: string, props?: BaseStackProps) {
     super(scope, id, props);
     this._org = this.node.tryGetContext("org");
     this._env = this.node.tryGetContext("env");
+    this.vpcIdParamName = props?.vpcIdParamName;
     if (
       !this._env ||
       this._environments.indexOf(this._env) == -1 ||
@@ -20,8 +30,8 @@ export class BaseStack extends Stack {
         )} -c org=my-org'`
       );
     }
-    // add standard tags
-    this.addTags({ org: this._org, env: this._env });
+    // add standard and custom tags
+    this.addTags({ org: this._org, env: this._env, ...props?.tags });
   }
   //can be invoked to add additional tags by implementation class
   addTags(tags: { [key: string]: string }) {
@@ -60,6 +70,28 @@ export class BaseStack extends Stack {
       resourceId = `${this._org}/${this._env}/${id}`;
     }
     return resourceId;
+  }
+
+  private createVpc() {
+    return Vpc.fromLookup(this, "vpc", {
+      vpcId: StringParameter.fromSecureStringParameterAttributes(
+        this,
+        "ssm-vpc",
+        {
+          parameterName: this.vpcIdParamName || "/global/vpc/defaultx",
+        }
+      ).stringValue,
+    });
+  }
+  /*
+    Implement lazy-initialized singleton pattern. 
+    Create VPC resource only for the first time it is called
+  */
+  getVpc() {
+    if (!this.vpc) {
+      this.vpc = this.createVpc();
+    }
+    return this.vpc;
   }
 
   setCfnOutput(resources: { name: string; value: string }[]) {
